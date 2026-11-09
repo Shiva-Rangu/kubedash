@@ -27,12 +27,10 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// --- Enterprise Data Models ---
-
 type ClusterEnv struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
-	Provider string `json:"provider"` // EKS, AKS, GKE, Talos, Local
+	Provider string `json:"provider"`
 	Version  string `json:"version"`
 	Status   string `json:"status"`
 	Nodes    int    `json:"nodes"`
@@ -42,8 +40,8 @@ type NodeMetric struct {
 	Name       string `json:"name"`
 	Role       string `json:"role"`
 	Status     string `json:"status"`
-	CPUUsage   int    `json:"cpuUsage"`   // percentage
-	MemUsage   int    `json:"memUsage"`   // percentage
+	CPUUsage   int    `json:"cpuUsage"`
+	MemUsage   int    `json:"memUsage"`
 	CPUCores   int    `json:"cpuCores"`
 	MemoryGB   int    `json:"memoryGB"`
 	HourlyCost string `json:"hourlyCost"`
@@ -64,22 +62,15 @@ type PodSummary struct {
 type DepSummary struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	Kind      string `json:"kind"` // Deployment, StatefulSet, DaemonSet
 	Replicas  int32  `json:"replicas"`
 	Ready     int32  `json:"ready"`
 	Available int32  `json:"available"`
 	Image     string `json:"image"`
 }
 
-type SvcSummary struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	Type      string `json:"type"`
-	ClusterIP string `json:"clusterIP"`
-	Ports     string `json:"ports"`
-}
-
 type ClusterEvent struct {
-	Type      string `json:"type"` // Normal, Warning
+	Type      string `json:"type"`
 	Reason    string `json:"reason"`
 	Object    string `json:"object"`
 	Message   string `json:"message"`
@@ -89,8 +80,8 @@ type ClusterEvent struct {
 type UserAccount struct {
 	Username string `json:"username"`
 	Team     string `json:"team"`
-	Role     string `json:"role"` // ClusterAdmin, DevOps, Viewer
-	AuthType string `json:"authType"` // OAuth/OIDC, LDAP/AD, Local
+	Role     string `json:"role"`
+	AuthType string `json:"authType"`
 }
 
 type AuditLog struct {
@@ -109,28 +100,99 @@ type ProjectGroup struct {
 	MemoryQuota string   `json:"memoryQuota"`
 }
 
+// --- Batch 2 Models ---
+
+type GitOpsApp struct {
+	Name       string `json:"name"`
+	Engine     string `json:"engine"` // ArgoCD or FluxCD
+	RepoURL    string `json:"repoUrl"`
+	Branch     string `json:"branch"`
+	Path       string `json:"path"`
+	SyncStatus string `json:"syncStatus"` // Synced, OutOfSync
+	Health     string `json:"health"`
+	LastCommit string `json:"lastCommit"`
+	AutoSync   bool   `json:"autoSync"`
+}
+
+type HelmRelease struct {
+	ReleaseName string `json:"releaseName"`
+	Chart       string `json:"chart"`
+	Version     string `json:"version"`
+	Namespace   string `json:"namespace"`
+	Status      string `json:"status"`
+	Updated     string `json:"updated"`
+}
+
+type GovernancePolicy struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Category    string `json:"category"` // PodSecurity, Quota, ImagePolicy
+	Enforced    bool   `json:"enforced"`
+	DriftStatus string `json:"driftStatus"` // Compliant, Drifted (2 resources)
+	TargetFleet string `json:"targetFleet"`
+}
+
+type ImageScan struct {
+	Image          string `json:"image"`
+	Registry       string `json:"registry"`
+	CurrentTag     string `json:"currentTag"`
+	LatestTag      string `json:"latestTag"`
+	UpdateAvail    bool   `json:"updateAvail"`
+	CriticalCVEs   int    `json:"criticalCVEs"`
+	HighCVEs       int    `json:"highCVEs"`
+	ScanStatus     string `json:"scanStatus"`
+}
+
+type StoragePVC struct {
+	Name         string `json:"name"`
+	Namespace    string `json:"namespace"`
+	StorageClass string `json:"storageClass"`
+	Capacity     string `json:"capacity"`
+	Status       string `json:"status"`
+}
+
+type PortForwardTunnel struct {
+	ID         string `json:"id"`
+	Service    string `json:"service"`
+	Namespace  string `json:"namespace"`
+	LocalPort  int    `json:"localPort"`
+	TargetPort int    `json:"targetPort"`
+	Status     string `json:"status"`
+}
+
 type Server struct {
-	mockMode     bool
-	mu           sync.Mutex
-	clusters     []ClusterEnv
-	mockNodes    []NodeMetric
-	mockPods     []PodSummary
-	mockDeps     []DepSummary
-	mockSvcs     []SvcSummary
-	mockEvents   []ClusterEvent
-	users        []UserAccount
-	auditLogs    []AuditLog
-	projects     []ProjectGroup
-	syslogServer string
-	clientset    *kubernetes.Clientset
-	dynamic      dynamic.Interface
-	discovery    discovery.DiscoveryInterface
+	mockMode          bool
+	mu                sync.Mutex
+	clusters          []ClusterEnv
+	mockNodes         []NodeMetric
+	mockPods          []PodSummary
+	mockDeps          []DepSummary
+	mockEvents        []ClusterEvent
+	users             []UserAccount
+	auditLogs         []AuditLog
+	projects          []ProjectGroup
+	syslogServer      string
+	// Batch 2 state
+	gitopsApps        []GitOpsApp
+	gitCredentials    []string
+	itsmWindowOpen    bool
+	enforceGitOnly    bool
+	helmReleases      []HelmRelease
+	policies          []GovernancePolicy
+	imageScans        []ImageScan
+	pvcs              []StoragePVC
+	portForwards      []PortForwardTunnel
+	clientset         *kubernetes.Clientset
+	dynamic           dynamic.Interface
+	discovery         discovery.DiscoveryInterface
 }
 
 func newEnterpriseMockServer() *Server {
 	return &Server{
-		mockMode:     true,
-		syslogServer: "udp://syslog.corp.internal:514",
+		mockMode:       true,
+		syslogServer:   "udp://syslog.corp.internal:514",
+		itsmWindowOpen: true,
+		enforceGitOnly: false,
 		clusters: []ClusterEnv{
 			{ID: "prod-eks-us", Name: "prod-us-east-eks", Provider: "AWS EKS", Version: "v1.31.2", Status: "Healthy", Nodes: 3},
 			{ID: "stage-aks-eu", Name: "staging-eu-aks", Provider: "Azure AKS", Version: "v1.30.4", Status: "Healthy", Nodes: 2},
@@ -143,31 +205,23 @@ func newEnterpriseMockServer() *Server {
 		},
 		mockPods: []PodSummary{
 			{Name: "api-gateway-7f8b9c-x92k1", Namespace: "default", Phase: "Running", PodIP: "10.244.0.14", NodeName: "worker-node-01", Restarts: 0, CPU: "145m", Memory: "256Mi", Age: "4h22m"},
-			{Name: "api-gateway-7f8b9c-m41p8", Namespace: "default", Phase: "Running", PodIP: "10.244.1.29", NodeName: "worker-node-02", Restarts: 1, CPU: "120m", Memory: "240Mi", Age: "4h22m"},
-			{Name: "redis-cache-0", Namespace: "default", Phase: "Running", PodIP: "10.244.0.18", NodeName: "worker-node-01", Restarts: 0, CPU: "85m", Memory: "512Mi", Age: "2d11h"},
+			{Name: "redis-cluster-0", Namespace: "default", Phase: "Running", PodIP: "10.244.0.18", NodeName: "worker-node-01", Restarts: 0, CPU: "85m", Memory: "512Mi", Age: "2d11h"},
 			{Name: "payment-worker-5d4c-k88j2", Namespace: "default", Phase: "CrashLoopBackOff", PodIP: "10.244.2.09", NodeName: "worker-node-02", Restarts: 6, CPU: "15m", Memory: "64Mi", Age: "18m"},
 			{Name: "coredns-66bcf65-zp9q1", Namespace: "kube-system", Phase: "Running", PodIP: "10.244.0.02", NodeName: "control-plane-01", Restarts: 0, CPU: "45m", Memory: "128Mi", Age: "14d"},
-			{Name: "argocd-server-8f5b-t71w4", Namespace: "gitops", Phase: "Running", PodIP: "10.244.0.55", NodeName: "worker-node-01", Restarts: 0, CPU: "210m", Memory: "420Mi", Age: "6d"},
 		},
 		mockDeps: []DepSummary{
-			{Name: "api-gateway", Namespace: "default", Replicas: 2, Ready: 2, Available: 2, Image: "ghcr.io/org/api-gateway:v2.4.1"},
-			{Name: "payment-worker", Namespace: "default", Replicas: 1, Ready: 0, Available: 0, Image: "ghcr.io/org/payment:v1.1.0"},
-			{Name: "coredns", Namespace: "kube-system", Replicas: 2, Ready: 2, Available: 2, Image: "registry.k8s.io/coredns:v1.11.1"},
-		},
-		mockSvcs: []SvcSummary{
-			{Name: "api-gateway-lb", Namespace: "default", Type: "LoadBalancer", ClusterIP: "10.96.45.120", Ports: "80/TCP, 443/TCP"},
-			{Name: "redis-headless", Namespace: "default", Type: "ClusterIP", ClusterIP: "10.96.112.8", Ports: "6379/TCP"},
-			{Name: "kube-dns", Namespace: "kube-system", Type: "ClusterIP", ClusterIP: "10.96.0.10", Ports: "53/UDP, 53/TCP"},
+			{Name: "api-gateway", Namespace: "default", Kind: "Deployment", Replicas: 2, Ready: 2, Available: 2, Image: "ghcr.io/org/api-gateway:v2.4.1"},
+			{Name: "payment-worker", Namespace: "default", Kind: "Deployment", Replicas: 1, Ready: 0, Available: 0, Image: "ghcr.io/org/payment:v1.1.0"},
+			{Name: "redis-cluster", Namespace: "default", Kind: "StatefulSet", Replicas: 3, Ready: 3, Available: 3, Image: "redis:7.2-alpine"},
+			{Name: "node-exporter", Namespace: "kube-system", Kind: "DaemonSet", Replicas: 3, Ready: 3, Available: 3, Image: "prom/node-exporter:v1.8.1"},
 		},
 		mockEvents: []ClusterEvent{
 			{Type: "Warning", Reason: "BackOff", Object: "Pod/payment-worker-5d4c-k88j2", Message: "Back-off restarting failed container: missing DB_PASSWORD env secret", Timestamp: "2m ago"},
 			{Type: "Normal", Reason: "Scheduled", Object: "Pod/api-gateway-7f8b9c-x92k1", Message: "Successfully assigned default/api-gateway to worker-node-01", Timestamp: "14m ago"},
-			{Type: "Normal", Reason: "ScalingReplicaSet", Object: "Deployment/api-gateway", Message: "Scaled up replica set api-gateway-7f8b9c to 2", Timestamp: "1h ago"},
 		},
 		users: []UserAccount{
 			{Username: "shiva.admin", Team: "Platform-Engineering", Role: "ClusterAdmin", AuthType: "OIDC / Okta SSO"},
 			{Username: "priya.devops", Team: "Payments-Squad", Role: "DevOps-Lead", AuthType: "ActiveDirectory / LDAP"},
-			{Username: "rahul.dev", Team: "Checkout-Squad", Role: "Developer-Viewer", AuthType: "GitHub OAuth"},
 		},
 		projects: []ProjectGroup{
 			{Name: "Core-FinTech-Platform", Team: "Payments-Squad", Namespaces: []string{"default", "payments"}, CPUQuota: "16 Cores", MemoryQuota: "32 GiB"},
@@ -175,7 +229,32 @@ func newEnterpriseMockServer() *Server {
 		},
 		auditLogs: []AuditLog{
 			{Timestamp: time.Now().Add(-15 * time.Minute).Format("15:04:05"), User: "shiva.admin", Action: "SSO_LOGIN", Resource: "Cluster/prod-us-east-eks", Status: "SUCCESS"},
-			{Timestamp: time.Now().Add(-8 * time.Minute).Format("15:04:05"), User: "priya.devops", Action: "SCALE_DEPLOYMENT", Resource: "default/api-gateway (replicas=2)", Status: "SUCCESS"},
+		},
+		gitopsApps: []GitOpsApp{
+			{Name: "fintech-core-stack", Engine: "ArgoCD", RepoURL: "https://github.com/org/k8s-fleet-manifests", Branch: "main", Path: "overlays/prod", SyncStatus: "Synced", Health: "Healthy", LastCommit: "a91f4c2 (Webhook Auto-Sync)", AutoSync: true},
+			{Name: "payment-mesh-config", Engine: "FluxCD", RepoURL: "https://github.com/org/payment-gitops", Branch: "release/v2", Path: "clusters/eks", SyncStatus: "OutOfSync", Health: "Degraded", LastCommit: "7b3e110 (Pending ITSM Gate)", AutoSync: true},
+		},
+		gitCredentials: []string{"github-enterprise-ssh-key (Shared)", "gitlab-deploy-token-prod (Shared)"},
+		helmReleases: []HelmRelease{
+			{ReleaseName: "kube-prometheus-stack", Chart: "prometheus-community/kube-prometheus-stack", Version: "61.3.0", Namespace: "kube-system", Status: "deployed", Updated: "2d ago"},
+			{ReleaseName: "ingress-nginx", Chart: "ingress-nginx/ingress-nginx", Version: "4.11.1", Namespace: "default", Status: "deployed", Updated: "5d ago"},
+		},
+		policies: []GovernancePolicy{
+			{ID: "pol-1", Name: "Enforce Restricted Pod Security Standard (Disallow Privileged)", Category: "PodSecurity", Enforced: true, DriftStatus: "Compliant", TargetFleet: "All Clusters"},
+			{ID: "pol-2", Name: "Require Namespace ResourceQuotas & LimitRanges", Category: "Quota", Enforced: true, DriftStatus: "Drifted (1 Namespace)", TargetFleet: "prod-us-east-eks"},
+			{ID: "pol-3", Name: "Block 'latest' Container Image Tags & Require Signed Images", Category: "ImagePolicy", Enforced: true, DriftStatus: "Drifted (payment-worker)", TargetFleet: "All Clusters"},
+		},
+		imageScans: []ImageScan{
+			{Image: "ghcr.io/org/api-gateway", Registry: "GitHub Container Registry", CurrentTag: "v2.4.1", LatestTag: "v2.5.0", UpdateAvail: true, CriticalCVEs: 0, HighCVEs: 1, ScanStatus: "Passed"},
+			{Image: "ghcr.io/org/payment", Registry: "GitHub Container Registry", CurrentTag: "v1.1.0", LatestTag: "v1.2.1", UpdateAvail: true, CriticalCVEs: 2, HighCVEs: 4, ScanStatus: "Action Required"},
+			{Image: "redis", Registry: "DockerHub Official", CurrentTag: "7.2-alpine", LatestTag: "7.2-alpine", UpdateAvail: false, CriticalCVEs: 0, HighCVEs: 0, ScanStatus: "Clean"},
+		},
+		pvcs: []StoragePVC{
+			{Name: "redis-data-redis-cluster-0", Namespace: "default", StorageClass: "gp3-encrypted", Capacity: "50Gi", Status: "Bound"},
+			{Name: "prometheus-tsdb-volume", Namespace: "kube-system", StorageClass: "gp3-encrypted", Capacity: "200Gi", Status: "Bound"},
+		},
+		portForwards: []PortForwardTunnel{
+			{ID: "pf-1", Service: "api-gateway-lb", Namespace: "default", LocalPort: 9090, TargetPort: 80, Status: "Active (127.0.0.1:9090)"},
 		},
 	}
 }
@@ -228,7 +307,6 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	json.NewEncoder(w).Encode(data)
 }
 
-// GET /api/overview
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -245,7 +323,6 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /api/clusters -> Import cluster via kubeconfig or Omni/Cloud
 func (s *Server) handleClusters(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -255,23 +332,14 @@ func (s *Server) handleClusters(w http.ResponseWriter, r *http.Request) {
 			Provider string `json:"provider"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
-		newC := ClusterEnv{
-			ID:       fmt.Sprintf("cluster-%d", len(s.clusters)+1),
-			Name:     req.Name,
-			Provider: req.Provider,
-			Version:  "v1.31.2",
-			Status:   "Healthy",
-			Nodes:    3,
-		}
-		s.clusters = append(s.clusters, newC)
-		s.recordAudit("shiva.admin", "IMPORT_CLUSTER", req.Name+" ("+req.Provider+")", "SUCCESS")
-		writeJSON(w, http.StatusOK, s.clusters)
-		return
+		s.clusters = append(s.clusters, ClusterEnv{
+			ID: fmt.Sprintf("cluster-%d", len(s.clusters)+1), Name: req.Name, Provider: req.Provider, Version: "v1.31.2", Status: "Healthy", Nodes: 3,
+		})
+		s.recordAudit("shiva.admin", "PROVISION_OR_IMPORT_CLUSTER", req.Name+" ("+req.Provider+")", "SUCCESS")
 	}
 	writeJSON(w, http.StatusOK, s.clusters)
 }
 
-// GET & DELETE /api/pods
 func (s *Server) handlePods(w http.ResponseWriter, r *http.Request) {
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
@@ -279,7 +347,6 @@ func (s *Server) handlePods(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	if r.Method == http.MethodGet {
 		var out []PodSummary
 		for _, p := range s.mockPods {
@@ -304,7 +371,6 @@ func (s *Server) handlePods(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GET & POST /api/deployments
 func (s *Server) handleDeployments(w http.ResponseWriter, r *http.Request) {
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
@@ -312,7 +378,6 @@ func (s *Server) handleDeployments(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	if r.Method == http.MethodGet {
 		var out []DepSummary
 		for _, d := range s.mockDeps {
@@ -324,6 +389,11 @@ func (s *Server) handleDeployments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
+		if s.enforceGitOnly {
+			s.recordAudit("shiva.admin", "MANUAL_CHANGE_BLOCKED", "Enforce Git-Only Policy Active", "DENIED")
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "Blocked by Fleet Policy: Code-based GitOps deployment only is enforced."})
+			return
+		}
 		var req struct {
 			Action    string `json:"action"`
 			Namespace string `json:"namespace"`
@@ -337,7 +407,7 @@ func (s *Server) handleDeployments(w http.ResponseWriter, r *http.Request) {
 					s.mockDeps[i].Replicas = req.Replicas
 					s.mockDeps[i].Ready = req.Replicas
 					s.mockDeps[i].Available = req.Replicas
-					s.recordAudit("shiva.admin", "SCALE_DEPLOYMENT", fmt.Sprintf("%s/%s -> %d", req.Namespace, req.Name, req.Replicas), "SUCCESS")
+					s.recordAudit("shiva.admin", "SCALE_WORKLOAD", fmt.Sprintf("%s/%s -> %d", req.Namespace, req.Name, req.Replicas), "SUCCESS")
 				} else if req.Action == "restart" {
 					s.recordAudit("shiva.admin", "ROLLING_RESTART", req.Namespace+"/"+req.Name, "SUCCESS")
 				}
@@ -347,21 +417,6 @@ func (s *Server) handleDeployments(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GET /api/services
-func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
-	ns := r.URL.Query().Get("namespace")
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []SvcSummary
-	for _, svc := range s.mockSvcs {
-		if svc.Namespace == ns {
-			out = append(out, svc)
-		}
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-// GET /api/logs
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	ns := r.URL.Query().Get("namespace")
 	pod := r.URL.Query().Get("pod")
@@ -371,12 +426,9 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "[%s] FATAL Environment variable DB_PASSWORD is not set in Secret 'payment-db-secret'\n", time.Now().Format(time.RFC3339))
 		return
 	}
-	fmt.Fprintf(w, "[%s] INFO Starting container in pod %s (namespace: %s)\n", time.Now().Add(-5*time.Minute).Format(time.RFC3339), pod, ns)
-	fmt.Fprintf(w, "[%s] INFO Connected to service mesh on 10.96.0.1:443\n", time.Now().Add(-2*time.Minute).Format(time.RFC3339))
-	fmt.Fprintf(w, "[%s] INFO Readiness probe succeeded: HTTP 200 OK\n", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(w, "[%s] INFO Container %s healthy in namespace %s\n", time.Now().Format(time.RFC3339), pod, ns)
 }
 
-// POST /api/exec -> Interactive Web Terminal Command Handler
 func (s *Server) handleTerminalExec(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Pod     string `json:"pod"`
@@ -386,25 +438,14 @@ func (s *Server) handleTerminalExec(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.recordAudit("shiva.admin", "CONTAINER_EXEC", fmt.Sprintf("%s (%s)", req.Pod, req.Command), "SUCCESS")
 	s.mu.Unlock()
-
 	cmd := strings.TrimSpace(req.Command)
-	var output string
-	switch {
-	case cmd == "ls" || cmd == "ls -la":
-		output = "drwxr-xr-x 1 root root 4096 Nov 09 10:00 .\n-rwxr-xr-x 1 root root 18420 Nov 09 10:00 server\n-rw-r--r-- 1 root root   412 Nov 09 10:00 config.yaml"
-	case cmd == "ps aux" || cmd == "top":
-		output = "PID   USER     TIME  COMMAND\n    1 root      0:04 ./server --port=8080\n   42 root      0:00 /bin/sh"
-	case cmd == "env":
-		output = "KUBERNETES_SERVICE_HOST=10.96.0.1\nKUBERNETES_PORT=tcp://10.96.0.1:443\nHOSTNAME=" + req.Pod
-	case strings.HasPrefix(cmd, "kubectl"):
-		output = "NAME                          READY   STATUS    RESTARTS   AGE\napi-gateway-7f8b9c-x92k1      1/1     Running   0          4h\nredis-cache-0                 1/1     Running   0          2d"
-	default:
-		output = fmt.Sprintf("Executed inside %s: %s (exit code 0)", req.Pod, cmd)
+	output := fmt.Sprintf("Executed inside %s: %s (exit code 0)", req.Pod, cmd)
+	if cmd == "kubectl get pods" {
+		output = "NAME                          READY   STATUS    RESTARTS   AGE\napi-gateway-7f8b9c-x92k1      1/1     Running   0          4h\nredis-cluster-0               1/1     Running   0          2d"
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"output": output})
 }
 
-// GET & POST /api/iam -> Users, Teams, RBAC, SSO, Audit Logs & Syslog
 func (s *Server) handleIAM(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -422,35 +463,168 @@ func (s *Server) handleIAM(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /api/ai-assistant -> AI Cluster Diagnostics & Root-Cause Analyzer
 func (s *Server) handleAIAssistant(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt string `json:"prompt"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	p := strings.ToLower(req.Prompt)
-
-	var reply string
-	if strings.Contains(p, "crash") || strings.Contains(p, "payment") || strings.Contains(p, "error") {
-		reply = "🔍 **Root Cause Identified (`payment-worker-5d4c-k88j2`):**\n" +
-			"1. **Symptom:** Pod is in `CrashLoopBackOff` with 6 restarts on `worker-node-02`.\n" +
-			"2. **Log & Event Correlation:** Container exited with status 1 because environment variable `DB_PASSWORD` is missing from Secret `payment-db-secret`.\n" +
-			"3. **Recommended Fix:** Run:\n`kubectl create secret generic payment-db-secret --from-literal=DB_PASSWORD=your_secure_pw -n default`"
-	} else if strings.Contains(p, "cost") || strings.Contains(p, "cpu") || strings.Contains(p, "node") {
-		reply = "📊 **Cluster Efficiency & Cost Report:**\n" +
-			"- `worker-node-01` is at **68% CPU / 74% RAM** ($0.76/hr).\n" +
-			"- `worker-node-02` is underutilized at **41% CPU**.\n" +
-			"- **Recommendation:** Enable HorizontalPodAutoscaler on `api-gateway` and right-size `worker-node-02` to save ~$180/month."
-	} else {
-		reply = "✅ **AI Cluster Health Summary:**\n" +
-			"- **healthy:** 5/6 Pods running across 3 nodes.\n" +
-			"- **1 Alert:** `payment-worker-5d4c-k88j2` is in `CrashLoopBackOff` (missing `DB_PASSWORD` secret). Ask me *'Why is payment-worker crashing?'* for remediation steps."
+	reply := "✅ **AI Cluster Summary:** 3 Clusters Healthy. 1 Pod (`payment-worker`) in CrashLoopBackOff due to missing `DB_PASSWORD`, and 2 Critical CVEs detected in `ghcr.io/org/payment:v1.1.0`."
+	if strings.Contains(p, "crash") || strings.Contains(p, "payment") {
+		reply = "🔍 **Root Cause (`payment-worker-5d4c-k88j2`):** Missing secret key `DB_PASSWORD` + image `v1.1.0` has 2 Critical CVEs. Upgrade to `v1.2.1` in the Security tab and create the secret."
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"reply": reply})
 }
 
-// POST /api/apply -> Dynamic YAML Applier
+// --- Batch 2 Endpoints ---
+
+// GET & POST /api/gitops
+func (s *Server) handleGitOps(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r.Method == http.MethodPost {
+		var req struct {
+			Action  string `json:"action"` // "sync", "add", "toggle_itsm", "toggle_gitonly"
+			Name    string `json:"name"`
+			Engine  string `json:"engine"`
+			RepoURL string `json:"repoUrl"`
+			Branch  string `json:"branch"`
+			Path    string `json:"path"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		switch req.Action {
+		case "sync":
+			if !s.itsmWindowOpen {
+				s.recordAudit("shiva.admin", "GITOPS_SYNC_BLOCKED", "ITSM Change Freeze Window Active", "DENIED")
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "Blocked by ITSM Change Window Gate: Maintenance window is currently CLOSED."})
+				return
+			}
+			for i := range s.gitopsApps {
+				if s.gitopsApps[i].Name == req.Name {
+					s.gitopsApps[i].SyncStatus = "Synced"
+					s.gitopsApps[i].Health = "Healthy"
+					s.gitopsApps[i].LastCommit = "f82c901 (Manual Webhook Sync)"
+				}
+			}
+			s.recordAudit("shiva.admin", "GITOPS_SYNC", req.Name, "SUCCESS")
+		case "add":
+			s.gitopsApps = append(s.gitopsApps, GitOpsApp{
+				Name: req.Name, Engine: req.Engine, RepoURL: req.RepoURL, Branch: req.Branch, Path: req.Path, SyncStatus: "Synced", Health: "Healthy", LastCommit: "HEAD (Initial Sync)", AutoSync: true,
+			})
+			s.recordAudit("shiva.admin", "REGISTER_GITOPS_REPO", req.RepoURL, "SUCCESS")
+		case "toggle_itsm":
+			s.itsmWindowOpen = !s.itsmWindowOpen
+			s.recordAudit("shiva.admin", "TOGGLE_ITSM_GATE", fmt.Sprintf("Window Open=%v", s.itsmWindowOpen), "SUCCESS")
+		case "toggle_gitonly":
+			s.enforceGitOnly = !s.enforceGitOnly
+			s.recordAudit("shiva.admin", "TOGGLE_GIT_ONLY_POLICY", fmt.Sprintf("Enforce=%v", s.enforceGitOnly), "SUCCESS")
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"apps":           s.gitopsApps,
+		"credentials":    s.gitCredentials,
+		"itsmWindowOpen": s.itsmWindowOpen,
+		"enforceGitOnly": s.enforceGitOnly,
+	})
+}
+
+// GET & POST /api/helm
+func (s *Server) handleHelm(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r.Method == http.MethodPost {
+		var req struct {
+			ReleaseName string `json:"releaseName"`
+			Chart       string `json:"chart"`
+			Version     string `json:"version"`
+			Namespace   string `json:"namespace"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		s.helmReleases = append(s.helmReleases, HelmRelease{
+			ReleaseName: req.ReleaseName, Chart: req.Chart, Version: req.Version, Namespace: req.Namespace, Status: "deployed", Updated: "Just now",
+		})
+		s.recordAudit("shiva.admin", "HELM_INSTALL", req.ReleaseName+" ("+req.Chart+")", "SUCCESS")
+	}
+	writeJSON(w, http.StatusOK, s.helmReleases)
+}
+
+// GET & POST /api/governance
+func (s *Server) handleGovernance(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r.Method == http.MethodPost {
+		var req struct {
+			Action string `json:"action"` // "remediate" or "toggle"
+			ID     string `json:"id"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		for i := range s.policies {
+			if s.policies[i].ID == req.ID {
+				if req.Action == "remediate" {
+					s.policies[i].DriftStatus = "Compliant (Auto-Remediated)"
+					s.recordAudit("shiva.admin", "REMEDIATE_POLICY_DRIFT", s.policies[i].Name, "SUCCESS")
+				} else if req.Action == "toggle" {
+					s.policies[i].Enforced = !s.policies[i].Enforced
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, s.policies)
+}
+
+// GET & POST /api/security
+func (s *Server) handleSecurity(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r.Method == http.MethodPost {
+		var req struct {
+			Image string `json:"image"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		for i := range s.imageScans {
+			if s.imageScans[i].Image == req.Image {
+				s.imageScans[i].CurrentTag = s.imageScans[i].LatestTag
+				s.imageScans[i].UpdateAvail = false
+				s.imageScans[i].CriticalCVEs = 0
+				s.imageScans[i].HighCVEs = 0
+				s.imageScans[i].ScanStatus = "Patched & Verified"
+				s.recordAudit("shiva.admin", "UPGRADE_CONTAINER_IMAGE", req.Image+":"+s.imageScans[i].LatestTag, "SUCCESS")
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, s.imageScans)
+}
+
+// GET & POST /api/network-storage
+func (s *Server) handleNetStorage(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r.Method == http.MethodPost {
+		var req struct {
+			Service    string `json:"service"`
+			Namespace  string `json:"namespace"`
+			LocalPort  int    `json:"localPort"`
+			TargetPort int    `json:"targetPort"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		s.portForwards = append(s.portForwards, PortForwardTunnel{
+			ID: fmt.Sprintf("pf-%d", len(s.portForwards)+1), Service: req.Service, Namespace: req.Namespace, LocalPort: req.LocalPort, TargetPort: req.TargetPort, Status: fmt.Sprintf("Active (127.0.0.1:%d)", req.LocalPort),
+		})
+		s.recordAudit("shiva.admin", "START_PORT_FORWARD", fmt.Sprintf("%s (%d->%d)", req.Service, req.LocalPort, req.TargetPort), "SUCCESS")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pvcs":         s.pvcs,
+		"portForwards": s.portForwards,
+	})
+}
+
 func (s *Server) handleApplyYAML(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.itsmWindowOpen {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "ITSM Change Window is currently CLOSED. Open it in GitOps & Change Gates."})
+		return
+	}
 	var payload struct {
 		YAML string `json:"yaml"`
 	}
@@ -462,21 +636,9 @@ func (s *Server) handleApplyYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	obj := &unstructured.Unstructured{}
 	json.Unmarshal(jsonBytes, &obj.Object)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ns := obj.GetNamespace()
-	if ns == "" {
-		ns = "default"
-	}
 	name := obj.GetName()
 	kind := obj.GetKind()
-
-	if strings.EqualFold(kind, "Deployment") {
-		s.mockDeps = append(s.mockDeps, DepSummary{Name: name, Namespace: ns, Replicas: 2, Ready: 2, Available: 2, Image: "nginx:alpine"})
-		s.mockPods = append(s.mockPods, PodSummary{Name: name + "-pod-1", Namespace: ns, Phase: "Running", PodIP: "10.244.3.55", NodeName: "worker-node-01", Restarts: 0, CPU: "50m", Memory: "128Mi", Age: "1s"})
-	}
-	s.recordAudit("shiva.admin", "APPLY_YAML", fmt.Sprintf("%s/%s (%s)", ns, name, kind), "SUCCESS")
+	s.recordAudit("shiva.admin", "APPLY_YAML", fmt.Sprintf("%s/%s", kind, name), "SUCCESS")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "applied", "kind": kind, "name": name})
 }
 
@@ -487,24 +649,24 @@ func main() {
 			srv.clientset = cs
 			srv.dynamic, _ = dynamic.NewForConfig(cfg)
 			srv.discovery, _ = discovery.NewDiscoveryClientForConfig(cfg)
-			log.Println("Connected to live Kubernetes cluster + Enterprise Control Plane extensions")
 		}
-	} else {
-		log.Printf("Running in Enterprise Simulator Mode (%v)", err)
 	}
 
 	http.HandleFunc("/api/overview", cors(srv.handleOverview))
 	http.HandleFunc("/api/clusters", cors(srv.handleClusters))
 	http.HandleFunc("/api/pods", cors(srv.handlePods))
 	http.HandleFunc("/api/deployments", cors(srv.handleDeployments))
-	http.HandleFunc("/api/services", cors(srv.handleServices))
 	http.HandleFunc("/api/logs", cors(srv.handleLogs))
 	http.HandleFunc("/api/exec", cors(srv.handleTerminalExec))
 	http.HandleFunc("/api/iam", cors(srv.handleIAM))
 	http.HandleFunc("/api/ai-assistant", cors(srv.handleAIAssistant))
+	http.HandleFunc("/api/gitops", cors(srv.handleGitOps))
+	http.HandleFunc("/api/helm", cors(srv.handleHelm))
+	http.HandleFunc("/api/governance", cors(srv.handleGovernance))
+	http.HandleFunc("/api/security", cors(srv.handleSecurity))
+	http.HandleFunc("/api/network-storage", cors(srv.handleNetStorage))
 	http.HandleFunc("/api/apply", cors(srv.handleApplyYAML))
 
-	// Unused imports guard for live cluster mode compatibility
 	_ = context.Background
 	_ = corev1.PodLogOptions{}
 	_ = metav1.ListOptions{}
@@ -522,6 +684,6 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("Enterprise Kubernetes Platform listening on http://localhost:%s", port)
+	log.Printf("Enterprise Kubernetes Platform (Batch 2) listening on http://localhost:%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
