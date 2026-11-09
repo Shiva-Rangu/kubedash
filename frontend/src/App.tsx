@@ -8,6 +8,7 @@ type Section =
   | 'governance'
   | 'security'
   | 'netstorage'
+  | 'plugins'
   | 'terminal'
   | 'events'
   | 'iam'
@@ -28,12 +29,15 @@ export default function App() {
 
   const [pods, setPods] = useState<any[]>([]);
   const [deployments, setDeployments] = useState<any[]>([]);
-  const [iamData, setIamData] = useState<any>({ users: [], auditLogs: [], ssoProviders: [], syslogServer: '' });
+  const [iamData, setIamData] = useState<any>({
+    users: [], rbacRoles: [], ldapConfig: {}, auditLogs: [], ssoProviders: [], syslogServer: ''
+  });
   const [gitopsData, setGitopsData] = useState<any>({ apps: [], credentials: [], itsmWindowOpen: true, enforceGitOnly: false });
   const [helmReleases, setHelmReleases] = useState<any[]>([]);
   const [policies, setPolicies] = useState<any[]>([]);
   const [imageScans, setImageScans] = useState<any[]>([]);
   const [netStorage, setNetStorage] = useState<any>({ pvcs: [], portForwards: [] });
+  const [plugins, setPlugins] = useState<any[]>([]);
 
   const [selectedPodLogs, setSelectedPodLogs] = useState<{ pod: string; logs: string } | null>(null);
   const [execPod, setExecPod] = useState('api-gateway-7f8b9c-x92k1');
@@ -50,10 +54,22 @@ export default function App() {
 
   const [newClusterName, setNewClusterName] = useState('');
   const [newClusterProvider, setNewClusterProvider] = useState('Talos Omni');
-  const [newUser, setNewUser] = useState({ username: '', team: 'Platform-Engineering', role: 'DevOps-Lead', authType: 'OIDC / Okta SSO' });
-  const [newGitApp, setNewGitApp] = useState({ name: '', engine: 'ArgoCD', repoUrl: 'https://github.com/org/gitops-repo', branch: 'main', path: 'k8s/prod' });
   const [newHelm, setNewHelm] = useState({ releaseName: 'cert-manager', chart: 'jetstack/cert-manager', version: '1.15.3', namespace: 'kube-system' });
   const [newTunnel, setNewTunnel] = useState({ service: 'redis-headless', namespace: 'default', localPort: 6379, targetPort: 6379 });
+
+  // Batch 3 State: Guided RBAC Role Builder, User Creation Sources & Custom Plugin Form
+  const [newUser, setNewUser] = useState({
+    username: '', team: 'Platform-Engineering', role: 'DevOps-Lead', authType: 'OIDC / Okta SSO', sourceType: 'Guided Form'
+  });
+  const [roleBuilder, setRoleBuilder] = useState({
+    name: 'sre-pod-operator',
+    scope: 'ClusterRole',
+    resources: ['pods', 'deployments', 'services'],
+    verbs: ['get', 'list', 'watch', 'create', 'delete']
+  });
+  const [newPlugin, setNewPlugin] = useState({
+    name: '', vendor: 'Internal Platform Team', version: 'v1.0.0', category: 'Custom', description: ''
+  });
 
   const [yamlInput, setYamlInput] = useState(
 `apiVersion: apps/v1
@@ -72,7 +88,7 @@ spec:
 
   const refreshAll = async () => {
     try {
-      const [ovRes, podRes, depRes, iamRes, gitRes, helmRes, govRes, secRes, nsRes] = await Promise.all([
+      const [ovRes, podRes, depRes, iamRes, gitRes, helmRes, govRes, secRes, nsRes, plugRes] = await Promise.all([
         fetch('/api/overview'),
         fetch(`/api/pods?namespace=${namespace}`),
         fetch(`/api/deployments?namespace=${namespace}`),
@@ -82,6 +98,7 @@ spec:
         fetch('/api/governance'),
         fetch('/api/security'),
         fetch('/api/network-storage'),
+        fetch('/api/plugins'),
       ]);
       if (ovRes.ok) setOverview(await ovRes.json());
       if (podRes.ok) setPods((await podRes.json()) || []);
@@ -92,6 +109,7 @@ spec:
       if (govRes.ok) setPolicies((await govRes.json()) || []);
       if (secRes.ok) setImageScans((await secRes.json()) || []);
       if (nsRes.ok) setNetStorage(await nsRes.json());
+      if (plugRes.ok) setPlugins((await plugRes.json()) || []);
     } catch (e) {
       console.error(e);
     }
@@ -126,47 +144,84 @@ spec:
     refreshAll();
   };
 
-  const installHelm = async (e: React.FormEvent) => {
+  const toggleArrayItem = (arr: string[], item: string) =>
+    arr.includes(item) ? arr.filter((i) => i !== item) : [...arr, item];
+
+  const createRBACRole = async (e: React.FormEvent) => {
     e.preventDefault();
-    await fetch('/api/helm', {
+    if (!roleBuilder.name) return;
+    await fetch('/api/iam', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newHelm),
+      body: JSON.stringify({
+        action: 'create_role',
+        roleDef: {
+          name: roleBuilder.name,
+          scope: roleBuilder.scope,
+          apiGroups: ['', 'apps', 'batch'],
+          resources: roleBuilder.resources,
+          verbs: roleBuilder.verbs,
+        },
+      }),
     });
-    flash(`Helm Chart ${newHelm.releaseName} deployed!`);
+    flash(`Created RBAC ${roleBuilder.scope}: ${roleBuilder.name}`);
     refreshAll();
   };
 
-  const govAction = async (id: string, action: 'remediate' | 'toggle') => {
-    await fetch('/api/governance', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, action }),
-    });
-    flash('Fleet Governance Policy updated');
-    refreshAll();
-  };
-
-  const upgradeImage = async (image: string) => {
-    await fetch('/api/security', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image }),
-    });
-    flash(`Upgraded ${image} to latest patched tag`);
-    refreshAll();
-  };
-
-  const startTunnel = async (e: React.FormEvent) => {
+  const provisionUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    await fetch('/api/network-storage', {
+    if (!newUser.username) return;
+    await fetch('/api/iam', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newTunnel),
+      body: JSON.stringify({ action: 'create_user', user: newUser }),
     });
-    flash(`Port-Forward started on localhost:${newTunnel.localPort}`);
+    setNewUser({ ...newUser, username: '' });
+    flash(`Provisioned user ${newUser.username} via ${newUser.sourceType}`);
     refreshAll();
   };
+
+  const triggerADSync = async () => {
+    await fetch('/api/iam', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'ad_sync' }),
+    });
+    flash('Active Directory LDAP Group & User Sync completed!');
+    refreshAll();
+  };
+
+  const togglePlugin = async (id: string) => {
+    await fetch('/api/plugins', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'toggle', id }),
+    });
+    flash('Updated Plugin status');
+    refreshAll();
+  };
+
+  const registerCustomPlugin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPlugin.name) return;
+    await fetch('/api/plugins', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'register', customPlugin: newPlugin }),
+    });
+    setNewPlugin({ name: '', vendor: 'Internal Platform Team', version: 'v1.0.0', category: 'Custom', description: '' });
+    flash(`Registered & enabled plugin: ${newPlugin.name}`);
+    refreshAll();
+  };
+
+  const generatedRBACYaml = `apiVersion: rbac.authorization.k8s.io/v1
+kind: ${roleBuilder.scope}
+metadata:
+  name: ${roleBuilder.name}
+rules:
+- apiGroups: ["", "apps", "batch"]
+  resources: [${roleBuilder.resources.map((r) => `"${r}"`).join(', ')}]
+  verbs: [${roleBuilder.verbs.map((v) => `"${v}"`).join(', ')}]`;
 
   return (
     <div className="min-h-screen flex bg-slate-950 text-slate-100">
@@ -175,7 +230,7 @@ spec:
         <div>
           <div className="p-4 border-b border-slate-800 flex items-center gap-2.5">
             <div className="h-3 w-3 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-bold text-base tracking-tight">KubePlatform IDP v2</span>
+            <span className="font-bold text-base tracking-tight">KubePlatform IDP v3</span>
           </div>
           <nav className="p-2.5 space-y-1 text-xs">
             {[
@@ -186,9 +241,10 @@ spec:
               { id: 'governance', label: '🛡️ Fleet Governance & Drift' },
               { id: 'security', label: '🔒 Security CVEs & Registries' },
               { id: 'netstorage', label: '🔌 Storage & Port-Forwarding' },
+              { id: 'plugins', label: '🧩 Plugins & Extensions' },
+              { id: 'iam', label: '🔐 Identity, AD Sync & RBAC' },
               { id: 'terminal', label: '💻 Container Terminal (Exec)' },
               { id: 'events', label: '⚡ Cluster Events Stream' },
-              { id: 'iam', label: '🔐 Identity, SSO, AD & Audit' },
               { id: 'ai', label: '🤖 AI Troubleshooter' },
               { id: 'yaml', label: '📝 Dynamic YAML Editor' },
             ].map((item) => (
@@ -206,7 +262,7 @@ spec:
         </div>
         <div className="p-3.5 border-t border-slate-800 text-[11px] text-slate-400 space-y-1">
           <div>ITSM Gate: <span className={gitopsData.itsmWindowOpen ? 'text-emerald-400' : 'text-rose-400'}>{gitopsData.itsmWindowOpen ? 'OPEN' : 'FROZEN'}</span></div>
-          <div>Deploy Mode: <span className="text-indigo-300">{gitopsData.enforceGitOnly ? 'GitOps-Only' : 'Hybrid UI+Git'}</span></div>
+          <div>Active Plugins: <span className="text-indigo-300">{plugins.filter((p) => p.installed).length} Enabled</span></div>
         </div>
       </aside>
 
@@ -228,7 +284,7 @@ spec:
         </header>
 
         <main className="p-6 space-y-6 overflow-auto flex-1">
-          {/* 1. OVERVIEW */}
+          {/* 1. OVERVIEW (+ Active Plugin Widgets) */}
           {section === 'overview' && (
             <div className="space-y-6">
               <div className="bg-slate-900 border border-slate-800 rounded-lg p-5">
@@ -264,6 +320,25 @@ spec:
                     <div className="w-full bg-slate-800 h-1.5 rounded"><div className="bg-indigo-500 h-full rounded" style={{ width: `${n.cpuUsage}%` }} /></div>
                   </div>
                 ))}
+              </div>
+
+              {/* Active Extension Widgets */}
+              <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-3">
+                <div className="flex justify-between items-center">
+                  <h3 className="font-semibold text-sm">Active Custom Plugin & Extension Telemetry</h3>
+                  <button onClick={() => setSection('plugins')} className="text-xs text-indigo-400 hover:underline">Manage Plugins →</button>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {plugins.filter((p) => p.installed).map((plug) => (
+                    <div key={plug.id} className="bg-slate-950 border border-slate-800 p-3.5 rounded-lg">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-xs text-indigo-300">{plug.name} ({plug.version})</span>
+                        <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded">{plug.category}</span>
+                      </div>
+                      <div className="font-mono text-xs text-slate-300 mt-2">{plug.widgetData}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -370,7 +445,7 @@ spec:
           {/* 4. HELM CHART CATALOG */}
           {section === 'helm' && (
             <div className="space-y-6">
-              <form onSubmit={installHelm} className="bg-slate-900 border border-slate-800 p-5 rounded-lg space-y-3">
+              <form onSubmit={async (e) => { e.preventDefault(); await fetch('/api/helm', { method: 'POST', body: JSON.stringify(newHelm) }); flash(`Helm Chart ${newHelm.releaseName} deployed!`); refreshAll(); }} className="bg-slate-900 border border-slate-800 p-5 rounded-lg space-y-3">
                 <h3 className="font-semibold text-sm">Deploy from Helm Chart Repository</h3>
                 <div className="grid grid-cols-4 gap-3">
                   <input value={newHelm.releaseName} onChange={(e) => setNewHelm({ ...newHelm, releaseName: e.target.value })} placeholder="Release Name" className="bg-slate-950 border border-slate-800 rounded p-2 text-xs" />
@@ -407,7 +482,7 @@ spec:
             </div>
           )}
 
-          {/* 5. FLEET GOVERNANCE & DRIFT REMEDIATION */}
+          {/* 5. FLEET GOVERNANCE */}
           {section === 'governance' && (
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4">
               <h2 className="font-semibold text-sm">Fleet Governance Policies & Automatic Drift Remediation</h2>
@@ -422,11 +497,11 @@ spec:
                   </div>
                   <div className="flex gap-2">
                     {pol.driftStatus.includes('Drifted') && (
-                      <button onClick={() => govAction(pol.id, 'remediate')} className="bg-amber-600 hover:bg-amber-500 px-3 py-1.5 rounded text-xs font-medium">
+                      <button onClick={async () => { await fetch('/api/governance', { method: 'POST', body: JSON.stringify({ id: pol.id, action: 'remediate' }) }); flash('Policy drift remediated'); refreshAll(); }} className="bg-amber-600 hover:bg-amber-500 px-3 py-1.5 rounded text-xs font-medium">
                         Auto-Remediate Drift
                       </button>
                     )}
-                    <button onClick={() => govAction(pol.id, 'toggle')} className={`px-3 py-1.5 rounded text-xs ${pol.enforced ? 'bg-emerald-600/30 text-emerald-300' : 'bg-slate-800 text-slate-400'}`}>
+                    <button onClick={async () => { await fetch('/api/governance', { method: 'POST', body: JSON.stringify({ id: pol.id, action: 'toggle' }) }); refreshAll(); }} className={`px-3 py-1.5 rounded text-xs ${pol.enforced ? 'bg-emerald-600/30 text-emerald-300' : 'bg-slate-800 text-slate-400'}`}>
                       {pol.enforced ? 'Enforced' : 'Audit-Only'}
                     </button>
                   </div>
@@ -435,7 +510,7 @@ spec:
             </div>
           )}
 
-          {/* 6. SECURITY CENTER & CONTAINER REGISTRIES */}
+          {/* 6. SECURITY & REGISTRIES */}
           {section === 'security' && (
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4">
               <h2 className="font-semibold text-sm">Container Vulnerability Scanner (Trivy) & New Image Availability</h2>
@@ -446,25 +521,23 @@ spec:
                       <div className="font-mono text-sm font-bold text-indigo-300">{img.image}:{img.currentTag}</div>
                       <div className="text-xs text-slate-400">Registry: {img.registry} | Critical CVEs: <strong className={img.criticalCVEs > 0 ? 'text-rose-400' : 'text-emerald-400'}>{img.criticalCVEs}</strong> | High CVEs: {img.highCVEs}</div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      {img.updateAvail ? (
-                        <button onClick={() => upgradeImage(img.image)} className="bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 rounded text-xs font-medium">
-                          ⬆️ Upgrade to {img.latestTag}
-                        </button>
-                      ) : (
-                        <span className="text-xs bg-emerald-500/20 text-emerald-300 px-2.5 py-1 rounded">Up to Date ({img.scanStatus})</span>
-                      )}
-                    </div>
+                    {img.updateAvail ? (
+                      <button onClick={async () => { await fetch('/api/security', { method: 'POST', body: JSON.stringify({ image: img.image }) }); flash(`Upgraded ${img.image}`); refreshAll(); }} className="bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 rounded text-xs font-medium">
+                        ⬆️ Upgrade to {img.latestTag}
+                      </button>
+                    ) : (
+                      <span className="text-xs bg-emerald-500/20 text-emerald-300 px-2.5 py-1 rounded">Up to Date ({img.scanStatus})</span>
+                    )}
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* 7. STORAGE & LOCAL PORT-FORWARDING */}
+          {/* 7. STORAGE & PORT-FORWARDING */}
           {section === 'netstorage' && (
             <div className="space-y-6">
-              <form onSubmit={startTunnel} className="bg-slate-900 border border-slate-800 p-5 rounded-lg space-y-3">
+              <form onSubmit={async (e) => { e.preventDefault(); await fetch('/api/network-storage', { method: 'POST', body: JSON.stringify(newTunnel) }); flash(`Port-Forward active on :${newTunnel.localPort}`); refreshAll(); }} className="bg-slate-900 border border-slate-800 p-5 rounded-lg space-y-3">
                 <h3 className="font-semibold text-sm">Local Port-Forwarding Tunnel</h3>
                 <div className="grid grid-cols-4 gap-3">
                   <input value={newTunnel.service} onChange={(e) => setNewTunnel({ ...newTunnel, service: e.target.value })} placeholder="Service Name" className="bg-slate-950 border border-slate-800 rounded p-2 text-xs" />
@@ -494,7 +567,180 @@ spec:
             </div>
           )}
 
-          {/* 8. TERMINAL */}
+          {/* 8. BATCH 3: CUSTOM PLUGINS & EXTENSIONS MARKETPLACE */}
+          {section === 'plugins' && (
+            <div className="space-y-6">
+              <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4">
+                <h2 className="font-semibold text-sm">Custom Plugins & Lens Extensions Marketplace</h2>
+                <div className="grid grid-cols-2 gap-4">
+                  {plugins.map((plug) => (
+                    <div key={plug.id} className="bg-slate-950 border border-slate-800 p-4 rounded-lg flex flex-col justify-between space-y-3">
+                      <div>
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded uppercase">{plug.category}</span>
+                            <h3 className="font-bold text-sm mt-1">{plug.name}</h3>
+                            <div className="text-xs text-slate-500">{plug.vendor} • {plug.version}</div>
+                          </div>
+                          <button
+                            onClick={() => togglePlugin(plug.id)}
+                            className={`px-3 py-1 rounded text-xs font-medium ${plug.installed ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40' : 'bg-indigo-600 text-white'}`}
+                          >
+                            {plug.installed ? '✓ Enabled' : '+ Install Extension'}
+                          </button>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-2">{plug.description}</p>
+                      </div>
+                      {plug.installed && (
+                        <div className="bg-slate-900 border border-slate-800 p-2.5 rounded font-mono text-[11px] text-emerald-300">
+                          {plug.widgetData}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <form onSubmit={registerCustomPlugin} className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-3">
+                <h3 className="font-semibold text-sm">Register Custom Internal Dashboard Extension / SDK Plugin</h3>
+                <div className="grid grid-cols-4 gap-3">
+                  <input placeholder="Plugin Name (e.g. PagerDuty Oncall)" value={newPlugin.name} onChange={(e) => setNewPlugin({ ...newPlugin, name: e.target.value })} className="bg-slate-950 border border-slate-800 rounded p-2 text-xs" />
+                  <input placeholder="Category (e.g. Alerting)" value={newPlugin.category} onChange={(e) => setNewPlugin({ ...newPlugin, category: e.target.value })} className="bg-slate-950 border border-slate-800 rounded p-2 text-xs" />
+                  <input placeholder="Short Description" value={newPlugin.description} onChange={(e) => setNewPlugin({ ...newPlugin, description: e.target.value })} className="bg-slate-950 border border-slate-800 rounded p-2 text-xs" />
+                  <button className="bg-indigo-600 hover:bg-indigo-500 rounded text-xs font-medium">+ Load Custom Plugin</button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* 9. BATCH 3: IDENTITY, ACTIVE DIRECTORY SYNC & GUIDED RBAC BUILDER */}
+          {section === 'iam' && (
+            <div className="space-y-6">
+              {/* Row 1: Active Directory Sync Wizard & Multi-Source User Provisioning */}
+              <div className="grid grid-cols-2 gap-6">
+                <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <h3 className="font-semibold text-sm">Active Directory / LDAP Auto-Sync</h3>
+                    <button onClick={triggerADSync} className="bg-emerald-600 hover:bg-emerald-500 px-3 py-1 rounded text-xs font-medium">
+                      🔄 Run AD Sync Now
+                    </button>
+                  </div>
+                  <div className="text-xs text-slate-400 space-y-1.5 font-mono bg-slate-950 p-3 rounded border border-slate-800">
+                    <div>Server: <span className="text-indigo-300">{iamData.ldapConfig?.serverUrl}</span></div>
+                    <div>Bind DN: <span className="text-slate-300">{iamData.ldapConfig?.bindDN}</span></div>
+                    <div>User OU: <span className="text-slate-300">{iamData.ldapConfig?.userSearchOU}</span></div>
+                    <div>Group OU: <span className="text-slate-300">{iamData.ldapConfig?.groupSearchOU}</span></div>
+                    <div>Status: <span className="text-emerald-400">Last Sync {iamData.ldapConfig?.lastSync} ({iamData.ldapConfig?.syncedGroups} AD Groups Mapped)</span></div>
+                  </div>
+                </div>
+
+                <form onSubmit={provisionUser} className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-3">
+                  <h3 className="font-semibold text-sm">Provision User & Team (Guided Form, YAML, Git, or Helm)</h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input placeholder="Username (e.g. dev.lead)" value={newUser.username} onChange={(e) => setNewUser({ ...newUser, username: e.target.value })} className="bg-slate-950 border border-slate-800 rounded p-2 text-xs" />
+                    <select value={newUser.sourceType} onChange={(e) => setNewUser({ ...newUser, sourceType: e.target.value })} className="bg-slate-950 border border-slate-800 rounded p-2 text-xs text-indigo-300">
+                      <option value="Guided Form">Source: Guided UI Form</option>
+                      <option value="YAML Manifest">Source: YAML Manifest</option>
+                      <option value="GitOps Repo">Source: Git Repository</option>
+                      <option value="Helm Chart">Source: Helm Chart</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select value={newUser.team} onChange={(e) => setNewUser({ ...newUser, team: e.target.value })} className="bg-slate-950 border border-slate-800 rounded p-2 text-xs">
+                      <option>Platform-Engineering</option>
+                      <option>Payments-Squad</option>
+                      <option>Cloud-SRE-AD-Group</option>
+                    </select>
+                    <select value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value })} className="bg-slate-950 border border-slate-800 rounded p-2 text-xs">
+                      {iamData.rbacRoles?.map((r: any) => <option key={r.name} value={r.name}>{r.name} ({r.scope})</option>)}
+                    </select>
+                  </div>
+                  <button className="bg-indigo-600 hover:bg-indigo-500 w-full py-2 rounded text-xs font-medium">Create User & Bind Role</button>
+                </form>
+              </div>
+
+              {/* Row 2: Guided Visual RBAC Role Builder + Live YAML Preview */}
+              <div className="grid grid-cols-2 gap-6">
+                <form onSubmit={createRBACRole} className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-3">
+                  <h3 className="font-semibold text-sm">Guided Visual RBAC Role Builder</h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input value={roleBuilder.name} onChange={(e) => setRoleBuilder({ ...roleBuilder, name: e.target.value })} placeholder="Role Name" className="bg-slate-950 border border-slate-800 rounded p-2 text-xs font-mono" />
+                    <select value={roleBuilder.scope} onChange={(e) => setRoleBuilder({ ...roleBuilder, scope: e.target.value })} className="bg-slate-950 border border-slate-800 rounded p-2 text-xs">
+                      <option value="ClusterRole">ClusterRole (Cluster-Wide)</option>
+                      <option value="Role">Role (Namespace-Scoped)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-400 mb-1">Kubernetes Resources:</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {['pods', 'pods/log', 'deployments', 'statefulsets', 'services', 'ingresses', 'secrets', 'configmaps', 'nodes'].map((res) => (
+                        <button
+                          type="button"
+                          key={res}
+                          onClick={() => setRoleBuilder({ ...roleBuilder, resources: toggleArrayItem(roleBuilder.resources, res) })}
+                          className={`px-2 py-1 rounded text-xs font-mono ${roleBuilder.resources.includes(res) ? 'bg-indigo-600 text-white' : 'bg-slate-950 text-slate-400 border border-slate-800'}`}
+                        >
+                          {res}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-400 mb-1">Allowed Verbs:</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {['get', 'list', 'watch', 'create', 'update', 'patch', 'delete'].map((v) => (
+                        <button
+                          type="button"
+                          key={v}
+                          onClick={() => setRoleBuilder({ ...roleBuilder, verbs: toggleArrayItem(roleBuilder.verbs, v) })}
+                          className={`px-2 py-1 rounded text-xs font-mono ${roleBuilder.verbs.includes(v) ? 'bg-emerald-600 text-white' : 'bg-slate-950 text-slate-400 border border-slate-800'}`}
+                        >
+                          {v}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <button className="bg-emerald-600 hover:bg-emerald-500 w-full py-2 rounded text-xs font-medium">Save & Apply RBAC Role</button>
+                </form>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 flex flex-col justify-between">
+                  <h3 className="font-semibold text-sm mb-2">Live Generated Kubernetes RBAC YAML</h3>
+                  <pre className="bg-slate-950 border border-slate-800 rounded p-3 font-mono text-xs text-emerald-300 overflow-auto flex-1">
+                    {generatedRBACYaml}
+                  </pre>
+                </div>
+              </div>
+
+              {/* Row 3: Provisioned Users Table & Compliance Audit Trail */}
+              <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-3">
+                <h3 className="font-semibold text-sm">Provisioned Users & Teams</h3>
+                <div className="grid grid-cols-3 gap-3">
+                  {iamData.users?.map((u: any, i: number) => (
+                    <div key={i} className="bg-slate-950 border border-slate-800 p-3 rounded text-xs space-y-1">
+                      <div className="font-bold text-indigo-300">{u.username}</div>
+                      <div className="text-slate-400">Team: {u.team} | Role: <strong className="text-emerald-400">{u.role}</strong></div>
+                      <div className="text-[11px] text-slate-500">{u.authType} • Created via {u.sourceType}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-lg p-5">
+                <h3 className="font-semibold text-sm mb-3">Compliance & Activity Audit Trail (Syslog: {iamData.syslogServer})</h3>
+                <div className="space-y-1.5 max-h-56 overflow-auto">
+                  {iamData.auditLogs?.map((log: any, idx: number) => (
+                    <div key={idx} className="bg-slate-950 border border-slate-800 px-3 py-2 rounded text-xs flex justify-between font-mono">
+                      <span>[{log.timestamp}] <strong className="text-indigo-300">{log.user}</strong> → {log.action}</span>
+                      <span className="text-slate-400">{log.resource}</span>
+                      <span className={log.status === 'SUCCESS' ? 'text-emerald-400' : 'text-rose-400'}>{log.status}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 10. TERMINAL */}
           {section === 'terminal' && (
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4">
               <h2 className="font-semibold text-sm">Interactive Container Shell ({execPod})</h2>
@@ -508,7 +754,7 @@ spec:
             </div>
           )}
 
-          {/* 9. EVENTS */}
+          {/* 11. EVENTS */}
           {section === 'events' && (
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-3">
               <h2 className="font-semibold text-sm">Cluster Events</h2>
@@ -521,25 +767,7 @@ spec:
             </div>
           )}
 
-          {/* 10. IAM & AUDIT */}
-          {section === 'iam' && (
-            <div className="space-y-4">
-              <div className="bg-slate-900 border border-slate-800 rounded-lg p-5">
-                <h3 className="font-semibold text-sm mb-3">Real-Time Compliance Audit Trail (Exported to {iamData.syslogServer})</h3>
-                <div className="space-y-1.5 max-h-80 overflow-auto">
-                  {iamData.auditLogs?.map((log: any, idx: number) => (
-                    <div key={idx} className="bg-slate-950 border border-slate-800 px-3 py-2 rounded text-xs flex justify-between font-mono">
-                      <span>[{log.timestamp}] <strong className="text-indigo-300">{log.user}</strong> → {log.action}</span>
-                      <span className="text-slate-400">{log.resource}</span>
-                      <span className={log.status === 'SUCCESS' ? 'text-emerald-400' : 'text-rose-400'}>{log.status}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 11. AI TROUBLESHOOTER */}
+          {/* 12. AI TROUBLESHOOTER */}
           {section === 'ai' && (
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4">
               <h2 className="font-semibold text-sm">AI Cluster Root-Cause Assistant</h2>
@@ -553,7 +781,7 @@ spec:
             </div>
           )}
 
-          {/* 12. YAML EDITOR */}
+          {/* 13. YAML EDITOR */}
           {section === 'yaml' && (
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-3">
               <div className="flex justify-between">

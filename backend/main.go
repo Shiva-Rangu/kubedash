@@ -62,7 +62,7 @@ type PodSummary struct {
 type DepSummary struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
-	Kind      string `json:"kind"` // Deployment, StatefulSet, DaemonSet
+	Kind      string `json:"kind"`
 	Replicas  int32  `json:"replicas"`
 	Ready     int32  `json:"ready"`
 	Available int32  `json:"available"`
@@ -78,10 +78,29 @@ type ClusterEvent struct {
 }
 
 type UserAccount struct {
-	Username string `json:"username"`
-	Team     string `json:"team"`
-	Role     string `json:"role"`
-	AuthType string `json:"authType"`
+	Username   string `json:"username"`
+	Team       string `json:"team"`
+	Role       string `json:"role"`
+	AuthType   string `json:"authType"`
+	SourceType string `json:"sourceType"` // Guided Form, ActiveDirectory, Git, Helm, YAML
+}
+
+type RBACRoleDef struct {
+	Name      string   `json:"name"`
+	Scope     string   `json:"scope"` // ClusterRole or Role
+	APIGroups []string `json:"apiGroups"`
+	Resources []string `json:"resources"`
+	Verbs     []string `json:"verbs"`
+}
+
+type LDAPConfig struct {
+	ServerURL    string `json:"serverUrl"`
+	BindDN       string `json:"bindDN"`
+	UserSearchOU string `json:"userSearchOU"`
+	GroupSearchOU string `json:"groupSearchOU"`
+	AutoSync     bool   `json:"autoSync"`
+	LastSync     string `json:"lastSync"`
+	SyncedGroups int    `json:"syncedGroups"`
 }
 
 type AuditLog struct {
@@ -100,15 +119,13 @@ type ProjectGroup struct {
 	MemoryQuota string   `json:"memoryQuota"`
 }
 
-// --- Batch 2 Models ---
-
 type GitOpsApp struct {
 	Name       string `json:"name"`
-	Engine     string `json:"engine"` // ArgoCD or FluxCD
+	Engine     string `json:"engine"`
 	RepoURL    string `json:"repoUrl"`
 	Branch     string `json:"branch"`
 	Path       string `json:"path"`
-	SyncStatus string `json:"syncStatus"` // Synced, OutOfSync
+	SyncStatus string `json:"syncStatus"`
 	Health     string `json:"health"`
 	LastCommit string `json:"lastCommit"`
 	AutoSync   bool   `json:"autoSync"`
@@ -126,21 +143,21 @@ type HelmRelease struct {
 type GovernancePolicy struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
-	Category    string `json:"category"` // PodSecurity, Quota, ImagePolicy
+	Category    string `json:"category"`
 	Enforced    bool   `json:"enforced"`
-	DriftStatus string `json:"driftStatus"` // Compliant, Drifted (2 resources)
+	DriftStatus string `json:"driftStatus"`
 	TargetFleet string `json:"targetFleet"`
 }
 
 type ImageScan struct {
-	Image          string `json:"image"`
-	Registry       string `json:"registry"`
-	CurrentTag     string `json:"currentTag"`
-	LatestTag      string `json:"latestTag"`
-	UpdateAvail    bool   `json:"updateAvail"`
-	CriticalCVEs   int    `json:"criticalCVEs"`
-	HighCVEs       int    `json:"highCVEs"`
-	ScanStatus     string `json:"scanStatus"`
+	Image        string `json:"image"`
+	Registry     string `json:"registry"`
+	CurrentTag   string `json:"currentTag"`
+	LatestTag    string `json:"latestTag"`
+	UpdateAvail  bool   `json:"updateAvail"`
+	CriticalCVEs int    `json:"criticalCVEs"`
+	HighCVEs     int    `json:"highCVEs"`
+	ScanStatus   string `json:"scanStatus"`
 }
 
 type StoragePVC struct {
@@ -160,31 +177,45 @@ type PortForwardTunnel struct {
 	Status     string `json:"status"`
 }
 
+// --- Batch 3: Plugin & Extension Model ---
+type DashboardPlugin struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Vendor      string `json:"vendor"`
+	Version     string `json:"version"`
+	Category    string `json:"category"` // FinOps, ServiceMesh, Chaos, Backup, Virtualization
+	Description string `json:"description"`
+	Installed   bool   `json:"installed"`
+	WidgetData  string `json:"widgetData"`
+}
+
 type Server struct {
-	mockMode          bool
-	mu                sync.Mutex
-	clusters          []ClusterEnv
-	mockNodes         []NodeMetric
-	mockPods          []PodSummary
-	mockDeps          []DepSummary
-	mockEvents        []ClusterEvent
-	users             []UserAccount
-	auditLogs         []AuditLog
-	projects          []ProjectGroup
-	syslogServer      string
-	// Batch 2 state
-	gitopsApps        []GitOpsApp
-	gitCredentials    []string
-	itsmWindowOpen    bool
-	enforceGitOnly    bool
-	helmReleases      []HelmRelease
-	policies          []GovernancePolicy
-	imageScans        []ImageScan
-	pvcs              []StoragePVC
-	portForwards      []PortForwardTunnel
-	clientset         *kubernetes.Clientset
-	dynamic           dynamic.Interface
-	discovery         discovery.DiscoveryInterface
+	mockMode       bool
+	mu             sync.Mutex
+	clusters       []ClusterEnv
+	mockNodes      []NodeMetric
+	mockPods       []PodSummary
+	mockDeps       []DepSummary
+	mockEvents     []ClusterEvent
+	users          []UserAccount
+	rbacRoles      []RBACRoleDef
+	ldapConfig     LDAPConfig
+	auditLogs      []AuditLog
+	projects       []ProjectGroup
+	syslogServer   string
+	gitopsApps     []GitOpsApp
+	gitCredentials []string
+	itsmWindowOpen bool
+	enforceGitOnly bool
+	helmReleases   []HelmRelease
+	policies       []GovernancePolicy
+	imageScans     []ImageScan
+	pvcs           []StoragePVC
+	portForwards   []PortForwardTunnel
+	plugins        []DashboardPlugin
+	clientset      *kubernetes.Clientset
+	dynamic        dynamic.Interface
+	discovery      discovery.DiscoveryInterface
 }
 
 func newEnterpriseMockServer() *Server {
@@ -220,8 +251,23 @@ func newEnterpriseMockServer() *Server {
 			{Type: "Normal", Reason: "Scheduled", Object: "Pod/api-gateway-7f8b9c-x92k1", Message: "Successfully assigned default/api-gateway to worker-node-01", Timestamp: "14m ago"},
 		},
 		users: []UserAccount{
-			{Username: "shiva.admin", Team: "Platform-Engineering", Role: "ClusterAdmin", AuthType: "OIDC / Okta SSO"},
-			{Username: "priya.devops", Team: "Payments-Squad", Role: "DevOps-Lead", AuthType: "ActiveDirectory / LDAP"},
+			{Username: "shiva.admin", Team: "Platform-Engineering", Role: "ClusterAdmin", AuthType: "OIDC / Okta SSO", SourceType: "Guided Form"},
+			{Username: "priya.devops", Team: "Payments-Squad", Role: "DevOps-Lead", AuthType: "ActiveDirectory / LDAP", SourceType: "AD Auto-Sync"},
+			{Username: "gitops-bot", Team: "Platform-Engineering", Role: "GitOps-Deployer", AuthType: "ServiceAccount Token", SourceType: "Helm Chart"},
+		},
+		rbacRoles: []RBACRoleDef{
+			{Name: "ClusterAdmin", Scope: "ClusterRole", APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}},
+			{Name: "DevOps-Lead", Scope: "ClusterRole", APIGroups: []string{"", "apps", "batch"}, Resources: []string{"pods", "deployments", "statefulsets", "jobs"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{Name: "Developer-Viewer", Scope: "Role", APIGroups: []string{"", "apps"}, Resources: []string{"pods", "pods/log", "deployments", "services"}, Verbs: []string{"get", "list", "watch"}},
+		},
+		ldapConfig: LDAPConfig{
+			ServerURL:     "ldaps://ad.corp.internal:636",
+			BindDN:        "CN=svc-k8s-ldap,OU=ServiceAccounts,DC=corp,DC=internal",
+			UserSearchOU:  "OU=Engineering,DC=corp,DC=internal",
+			GroupSearchOU: "OU=K8sSecurityGroups,DC=corp,DC=internal",
+			AutoSync:      true,
+			LastSync:      "10 mins ago",
+			SyncedGroups:  4,
 		},
 		projects: []ProjectGroup{
 			{Name: "Core-FinTech-Platform", Team: "Payments-Squad", Namespaces: []string{"default", "payments"}, CPUQuota: "16 Cores", MemoryQuota: "32 GiB"},
@@ -255,6 +301,13 @@ func newEnterpriseMockServer() *Server {
 		},
 		portForwards: []PortForwardTunnel{
 			{ID: "pf-1", Service: "api-gateway-lb", Namespace: "default", LocalPort: 9090, TargetPort: 80, Status: "Active (127.0.0.1:9090)"},
+		},
+		plugins: []DashboardPlugin{
+			{ID: "plug-kubecost", Name: "OpenCost / Kubecost FinOps", Vendor: "CNCF OpenCost", Version: "v2.3.0", Category: "FinOps", Description: "Real-time cost allocation by namespace, deployment, and cloud billing API.", Installed: true, WidgetData: "Idle Cluster Waste: $142/mo | Spot Instance Savings: $410/mo"},
+			{ID: "plug-istio", Name: "Istio Service Mesh Telemetry", Vendor: "Istio Ecosystem", Version: "v1.23.1", Category: "ServiceMesh", Description: "mTLS traffic topology, golden signals (p99 latency), and circuit breakers.", Installed: true, WidgetData: "mTLS Strict Mode: 100% Pods | Mesh p99 Latency: 4.2ms | 5xx Rate: 0.01%"},
+			{ID: "plug-velero", Name: "Velero Cluster Backup & DR", Vendor: "VMware Tanzu", Version: "v1.14.0", Category: "Backup", Description: "Scheduled etcd & PVC volume snapshots to AWS S3 / Azure Blob.", Installed: false, WidgetData: "Last Nightly Snapshot: S3://k8s-backups/prod-eks (RPO: 15m)"},
+			{ID: "plug-chaos", Name: "Chaos Mesh Resilience Studio", Vendor: "CNCF Chaos Mesh", Version: "v2.6.3", Category: "Chaos", Description: "Inject pod failure, network latency, and node drain experiments safely.", Installed: false, WidgetData: "3 Resilience Experiments Ready (PodKill, NetworkCorrupt, StressCPU)"},
+			{ID: "plug-kubevirt", Name: "KubeVirt Virtual Machine Manager", Vendor: "CNCF KubeVirt", Version: "v1.3.0", Category: "Virtualization", Description: "Run and live-migrate legacy Windows/Linux VMs alongside Kubernetes pods.", Installed: false, WidgetData: "2 VirtualMachineInstances running on worker-node-01"},
 		},
 	}
 }
@@ -446,21 +499,89 @@ func (s *Server) handleTerminalExec(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"output": output})
 }
 
+// Upgraded Batch 3 IAM Endpoint: Users, Guided RBAC Role Builder, Active Directory Sync
 func (s *Server) handleIAM(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r.Method == http.MethodPost {
-		var req UserAccount
+		var req struct {
+			Action     string      `json:"action"` // "create_user", "create_role", "ad_sync", "update_ldap"
+			User       UserAccount `json:"user"`
+			RoleDef    RBACRoleDef `json:"roleDef"`
+			LDAP       LDAPConfig  `json:"ldap"`
+		}
 		json.NewDecoder(r.Body).Decode(&req)
-		s.users = append(s.users, req)
-		s.recordAudit("shiva.admin", "CREATE_USER_RBAC", fmt.Sprintf("%s (%s)", req.Username, req.Role), "SUCCESS")
+		switch req.Action {
+		case "create_user":
+			if req.User.SourceType == "" {
+				req.User.SourceType = "Guided Form"
+			}
+			s.users = append(s.users, req.User)
+			s.recordAudit("shiva.admin", "PROVISION_USER_TEAM", fmt.Sprintf("%s (%s via %s)", req.User.Username, req.User.Role, req.User.SourceType), "SUCCESS")
+		case "create_role":
+			s.rbacRoles = append(s.rbacRoles, req.RoleDef)
+			s.recordAudit("shiva.admin", "CREATE_RBAC_ROLE", fmt.Sprintf("%s (%s)", req.RoleDef.Name, req.RoleDef.Scope), "SUCCESS")
+		case "ad_sync":
+			s.ldapConfig.LastSync = "Just now"
+			s.ldapConfig.SyncedGroups++
+			newADUser := fmt.Sprintf("ad.engineer.%d", len(s.users)+1)
+			s.users = append(s.users, UserAccount{
+				Username:   newADUser,
+				Team:       "Cloud-SRE-AD-Group",
+				Role:       "DevOps-Lead",
+				AuthType:   "ActiveDirectory / LDAP",
+				SourceType: "AD Auto-Sync",
+			})
+			s.recordAudit("system.ldap", "ACTIVE_DIRECTORY_SYNC", "Synced OU=K8sSecurityGroups (+1 User/Group)", "SUCCESS")
+		case "update_ldap":
+			s.ldapConfig = req.LDAP
+			s.ldapConfig.LastSync = "Config Updated"
+			s.recordAudit("shiva.admin", "UPDATE_LDAP_CONFIG", req.LDAP.ServerURL, "SUCCESS")
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"users":        s.users,
+		"rbacRoles":    s.rbacRoles,
+		"ldapConfig":   s.ldapConfig,
 		"auditLogs":    s.auditLogs,
 		"syslogServer": s.syslogServer,
-		"ssoProviders": []string{"Okta OIDC (Active)", "Microsoft Entra ID / AD Sync (Active)", "GitHub Enterprise OAuth (Configured)", "OpenLDAP (Standby)"},
+		"ssoProviders": []string{"Okta OIDC (Active)", "Microsoft Entra ID / AD Sync (Active)", "GitHub Enterprise OAuth (Configured)", "Keycloak SAML 2.0 (Standby)"},
 	})
+}
+
+// Batch 3 Endpoint: Custom Plugins & Extensions Marketplace
+func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r.Method == http.MethodPost {
+		var req struct {
+			Action      string          `json:"action"` // "toggle" or "register"
+			ID          string          `json:"id"`
+			CustomPlugin DashboardPlugin `json:"customPlugin"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		if req.Action == "toggle" {
+			for i := range s.plugins {
+				if s.plugins[i].ID == req.ID {
+					s.plugins[i].Installed = !s.plugins[i].Installed
+					state := "INSTALLED"
+					if !s.plugins[i].Installed {
+						state = "DISABLED"
+					}
+					s.recordAudit("shiva.admin", "PLUGIN_"+state, s.plugins[i].Name, "SUCCESS")
+				}
+			}
+		} else if req.Action == "register" {
+			req.CustomPlugin.ID = fmt.Sprintf("plug-custom-%d", len(s.plugins)+1)
+			req.CustomPlugin.Installed = true
+			if req.CustomPlugin.WidgetData == "" {
+				req.CustomPlugin.WidgetData = "Custom Extension Telemetry Active: Status 200 OK"
+			}
+			s.plugins = append(s.plugins, req.CustomPlugin)
+			s.recordAudit("shiva.admin", "REGISTER_CUSTOM_EXTENSION", req.CustomPlugin.Name, "SUCCESS")
+		}
+	}
+	writeJSON(w, http.StatusOK, s.plugins)
 }
 
 func (s *Server) handleAIAssistant(w http.ResponseWriter, r *http.Request) {
@@ -476,15 +597,12 @@ func (s *Server) handleAIAssistant(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"reply": reply})
 }
 
-// --- Batch 2 Endpoints ---
-
-// GET & POST /api/gitops
 func (s *Server) handleGitOps(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r.Method == http.MethodPost {
 		var req struct {
-			Action  string `json:"action"` // "sync", "add", "toggle_itsm", "toggle_gitonly"
+			Action  string `json:"action"`
 			Name    string `json:"name"`
 			Engine  string `json:"engine"`
 			RepoURL string `json:"repoUrl"`
@@ -507,11 +625,6 @@ func (s *Server) handleGitOps(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			s.recordAudit("shiva.admin", "GITOPS_SYNC", req.Name, "SUCCESS")
-		case "add":
-			s.gitopsApps = append(s.gitopsApps, GitOpsApp{
-				Name: req.Name, Engine: req.Engine, RepoURL: req.RepoURL, Branch: req.Branch, Path: req.Path, SyncStatus: "Synced", Health: "Healthy", LastCommit: "HEAD (Initial Sync)", AutoSync: true,
-			})
-			s.recordAudit("shiva.admin", "REGISTER_GITOPS_REPO", req.RepoURL, "SUCCESS")
 		case "toggle_itsm":
 			s.itsmWindowOpen = !s.itsmWindowOpen
 			s.recordAudit("shiva.admin", "TOGGLE_ITSM_GATE", fmt.Sprintf("Window Open=%v", s.itsmWindowOpen), "SUCCESS")
@@ -528,7 +641,6 @@ func (s *Server) handleGitOps(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET & POST /api/helm
 func (s *Server) handleHelm(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -548,13 +660,12 @@ func (s *Server) handleHelm(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.helmReleases)
 }
 
-// GET & POST /api/governance
 func (s *Server) handleGovernance(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r.Method == http.MethodPost {
 		var req struct {
-			Action string `json:"action"` // "remediate" or "toggle"
+			Action string `json:"action"`
 			ID     string `json:"id"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
@@ -572,7 +683,6 @@ func (s *Server) handleGovernance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.policies)
 }
 
-// GET & POST /api/security
 func (s *Server) handleSecurity(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -595,7 +705,6 @@ func (s *Server) handleSecurity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.imageScans)
 }
 
-// GET & POST /api/network-storage
 func (s *Server) handleNetStorage(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -659,6 +768,7 @@ func main() {
 	http.HandleFunc("/api/logs", cors(srv.handleLogs))
 	http.HandleFunc("/api/exec", cors(srv.handleTerminalExec))
 	http.HandleFunc("/api/iam", cors(srv.handleIAM))
+	http.HandleFunc("/api/plugins", cors(srv.handlePlugins))
 	http.HandleFunc("/api/ai-assistant", cors(srv.handleAIAssistant))
 	http.HandleFunc("/api/gitops", cors(srv.handleGitOps))
 	http.HandleFunc("/api/helm", cors(srv.handleHelm))
@@ -684,6 +794,6 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("Enterprise Kubernetes Platform (Batch 2) listening on http://localhost:%s", port)
+	log.Printf("Enterprise Kubernetes Platform (Batch 3) listening on http://localhost:%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
